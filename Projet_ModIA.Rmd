@@ -3,26 +3,92 @@ title: "Projet_ModIA"
 output: pdf_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+# Introduction
+Brève introduction sur le sujet, la problématique principale , les questions que l'on se pose et comment on va essayer de trouver une solution (quels données on aura besoin).
+
+# Jeu de données
+## 1) Récupération des données et analyse introductoire
+```{r setup}
+# on ouvre le jeu de données
+data = read.table("LifeExpectationData-Etudiants.csv")
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r}
+# on affiche les 6 premières lignes
+head(data)
 ```
 
-## Including Plots
+(petit commentaire sur le jeu de données)
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+## 2) Exploration du jeu de données
+(expliquer en bref l'objectif de cette partie (regarder s'il y a des données manquantes, reduire nbr de variables, identifier les outliers, enlever les valeurs aberrantes, etc.))
+### Summary des données
+```{r}
+summary(data)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+> Commentaires :
+1. Il peut y avoir des valeurs manquantes
+2. On a pas les données de tous les pays pour chaque anné
+3. status : au lieu de chaîne de caractères, on peut assigner des booléens
+4. on peut regrouper la couverture vaccinale de Hepatitis.B, Polio et HIV.AIDS en une seule variable (si l'écart n'est pas trop grand)
+5. percentage.expenditure : plusieurs pourcentages dépassent 100 (il faut peut être l'enlevé)
+
+#### Valeurs manquantes
+```{r}
+colSums(is.na(data))
+```
+
+Il n'y a donc pas de valeurs manquantes dans le jeu de données.
+
+#### Variable Year
+On compte le nombre d'occurences pour chaque pays. On devrait avoir 133.
+```{r}
+table(data$Year)
+```
+On remarque qu'il y a 2 pays qui n'ont pas de données pour 2014. (on doit les identifier et s'îl leur manque d'autres années, on les vire (on peut aussi simplement les virer directement vu que notre étude se base principalement en 2014 jsp))
+
+```{r}
+# Identification des pays :
+
+```
+
+#### Variable Status
+(on peut remplacer developed par 1 et developping par 0)
+
+```{r}
+
+```
+
+#### Variables Hepatitis.B, Polio et HIV.AIDS
+(On explique notre idée que les pays auront en général des couvertures vaccinales similaires pour ces 3 vaccins et donc de regrouper les 3 variables en une seule en prenant la moyenne)
+(On peut également controler qu'il n'y a pas de grandes variations dans les couvertures au cours des années)
+
+```{r}
+country_2014_polio = data[which(data$Year == 2014),]$Polio
+country_2014_dipht = data[which(data$Year == 2014),]$Diphtheria
+country_2014_hB = data[which(data$Year == 2014),]$Hepatitis.B
+
+summary(country_2014_polio)
+summary(country_2014_dipht)
+summary(country_2014_hB)
+```
+
+Les valeurs sont très similaires. 
+
+(faudrait essayer de faire avec ggplot car c'est tres approximatif ce graphique, les échelles sont pas les mêmes)
+```{r}
+plot(country_2014_dipht, col = "red", ylab = "")
+par(new = TRUE)
+plot(country_2014_hB, col = "green", ylab = "")
+par(new = TRUE)
+plot(country_2014_polio, col = "black", ylab = "Couverture vaccinale (%)")
+```
+
+(on peut dire que de façon générale, on peut prendre la moyenne)
+```{r}
+# création de la nouvelle variable couverture vaccinale qui est la moyenne des 3 autres pour chaque pays, pour chaque année. Y a plusieurs outliers dans les données, genre Afghanistan 2004 
+
+```
+
