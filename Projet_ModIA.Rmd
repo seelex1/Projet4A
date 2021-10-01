@@ -92,3 +92,45 @@ plot(country_2014_polio, col = "black", ylab = "Couverture vaccinale (%)")
 
 ```
 
+1. Visualisation la répartition de chaque variable. Remarque? Action finale.
+
+```{r}
+Y2014=data[which(data$Year==2014),]
+Y2014$Year<-c()
+xNum<-Y2014
+xNum$Country<-c()
+xNum$Status<-c() # on enleve les var qualitatives
+str(xNum)
+```
+
+```{r}
+boxplot(scale(xNum))
+```
+```{r}
+par(mfrow=c(4,4))
+
+# on prend la base log10 pour mieux repartir certaines
+for (i in c(12,13,14,15)){
+  xNum[,i] = log10(xNum[,i])
+}
+
+# on assure que y a pas 0 dans les 3 variables Infant.deaths, Measles, under.five.deaths
+for (i in c(3,6,8)){
+  xNum[,i] = log10(xNum[,i])+1
+}
+
+# on ajuste la fonction pour avoir une loi gaussienne pour les 3 variables qui ne sont pas bien repartie avec log10 (On a besion des loi gausiennes pour faire des modeles lineaires)
+for (i in c(5,9,11)){
+  xNum[,i] = -log10(100-xNum[,i])
+}
+
+# on affiche les histogrammes
+for (i in 1:ncol(xNum)){
+  hist(xNum[,i],freq=FALSE,main=names(xNum)[i])
+}
+```
+
+```{r}
+pairs(xNum)
+```
+
