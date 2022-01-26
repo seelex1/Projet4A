@@ -4,11 +4,25 @@ date: "4modIA - 2021-2022"
 output: pdf_document
 ---
 
-## BOUILLON Lucas, CARMONA Nestor, WANG Xiaoya, RHAYOUTE Abelmalek
+## BOUILLON Lucas, CARMONA Nestor, WANG Xiaoya
 
 
 # Introduction
+  Dans ce projet, on s'intéresse à un jeu de données issu de l'organisation mondial de la santé (OMS). Il est composé de données concernants de nombreux facteurs tels que les facteurs économiques, de mortalité, de vaccination, et ce pour 132 pays entre 2000 et 2014.
+  
+  FAIRE LE PLAN
+  
+Dans un premier temps, nous réaliserons une analyse gérérale du jeu de données, afin d'y repérer des variables redondantes, des transformations possible etc...
+Ensuite, une seconde partie sera consacrée à l'étude de l'espérance de vie en 2014 en fonctions des différents paramètres.
+Puis, une nouvelle études sera consacrée à l'espérance de vie, mais sur toutes les années, en considérant d'autres paramètres.
+  
+Par la suite, à chaque fois que nous utiliserons la balise `$`, cela signifiera qu'un code est exécuté dans le programme, mais n'est pas affiché dans le compte rendu. 
+
 # I - Analyse et préparation du jeu de données
+
+## I - 1. Préparation
+
+Avant de commencer l'analyse détaillée des données, on charge les librairies qui nous seront utiles tout au long de notre étude `$`, ainsi que le jeu de données.
 
 ## I - 1. Préparation
 ```{r lib, cache=FALSE, include=FALSE}
@@ -18,6 +32,7 @@ library(corrplot)
 library(dplyr)
 library(ggcorrplot)
 library(ggplot2)
+library(ggfortify)
 library(reshape)
 library(stats)
 library(ellipsis)
@@ -26,7 +41,14 @@ library(pillar)
 library(cluster)
 library(cowplot)
 library(leaps)
+library(gridExtra)
 library(MASS)
+library(questionr)
+library(nnet)
+library(GGally)
+library(pROC)
+library(caret)
+select = dplyr::select
 ```
 
 ```{r, echo=FALSE}
@@ -36,11 +58,28 @@ colnames(data) = new_names
 dim(data)
 str(data)
 ```
+On a bien notre jeu données, composé de 19 variables (dont 3 variables qualitatives "Country", "Status" et "Year") pour 1646 entrées. 
+
 ## 2) Exploration des données
+
+Afin de réaliser au mieux notre analyse sur le jeu de données, on recherche dans un premier temps d'éventuelles données manquantes, des outliers, ou encore si une réduction de la dimension d'étude est possible.
 
 ```{r}
 summary(data)
 ```
+
+Nous soulignons que la population en échelle de millions. 
+
+On peut déjà remarquer plusieurs anomalies ici : 
+
+- Problème avec le BMI (Indice de masse corporelle). Ce dernier ce situe normalement entre 12 et 45 individuellement, et ici, certaines données semblent montrer un BMI de 77.10 en moyenne pour un pays, ce qui est particulièrement anormal et montre une erreur dans les données. 
+
+- D'autres variables possèdes aussi des outliers, mais nous seront prudent quand au fait que ceci s'explique en majorité par les inégalités entre les pays nottament avec la variable "Schooling" qui posséde des valeurs très faibles dans certains pays, sans pour autant être des erreurs. Ce phénomène est d'autant plus visible car certaines valeurs moyenne sont bien plus faibles que les valeurs médianes pour certaines variables, ce qui montre la présence de nombreux outliers dans le jeu de données.
+
+-Les données "Measles" n'ont pas été divisées par 1000 comme convenu dans la déscription des données.
+
+Ensuite, on vérifie simplement que aucune donnée n'est manquante, ce qui est ici le cas `$`.
+
 
 ```{r, echo=FALSE}
 colSums(is.na(data))
@@ -48,17 +87,19 @@ colSums(is.na(data))
 
 ## I - 2. a) Mise à l'échelle des données
 
+Nous allons maintenant nous intéresser à une analyse plus détaillée des données, afin de trouver certaines modifications / transformations applicables à nos données. 
 
 ```{r,out.width ="600px",dpi = 120,fig.align='center'}
-select = dplyr::select
 data_num = select(data, -year, -country, -status) # removing categorical variables
 par(mar = rep(2, 4))
 par(mfrow=c(4,4), main="Histograms")
+
 
 for(col in 1:ncol(data_num)){
   hist(data_num[,col], main = colnames(data_num)[col], xlab = colnames(data_num)[col])
 }
 ```
+Pour certaines variables, les histogrammes sont fortement décalés vers une valeur non centrée (presque binaire). Pour réduire cette effet, nous appliquons une transformations logarithmiques sur ces données. `$`
 
 ```{r, echo=FALSE, out.width ="600px",dpi = 120,fig.align='center'}
 for(i in c(1,2,3,4,6,7,8)){
@@ -73,7 +114,6 @@ for (i in c(10,12,13,14,15,16)){
 for (i in c(5,9,11)){
   data_num[,i] = -log10(100-data_num[,i])
 }
-
 ```
 
 ```{r, include=FALSE}
@@ -84,12 +124,16 @@ for(col in 1:ncol(data_num)){
 }
 ```
 
+Maintenant que les données sont log-transformées, il faut les standardiser avant d'appliquer une ACP. 
+
 ```{r,out.width ="300px",dpi = 120,fig.align='center'}
 data_trans = scale(data_num)
 data_long = melt(data_trans)
 Normalised <- ggplot(data_long, aes(x = X2, y = value)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 60, hjust = 1))
 Normalised + labs(x="Variables",y="Valeurs")
 ```
+Les données étant maintenant normalisées, on s'intéresse à l'ACP. 
+
 
 ```{r,echo=FALSE,out.width ="250px",dpi = 120,fig.align='center', warning=FALSE}
 res.pca <- prcomp(data_trans, scale = TRUE)
@@ -109,6 +153,14 @@ corrplot(mcor, type="upper", order="hclust", tl.col="black", tl.srt=45)
 
 eig.val <- get_eigenvalue(res.pca)
 ```
+Grâce à ces deux visualisations, on se décide à regrouper certaines données fortements corrélées. `$` 
+
+1) vaccin_cov : regroupe Diphtheria et Polio
+
+(On décide de ne pas regrouper Hepatitis.B , car on préfère regrouper seulement Polio et Diphteria, ces deux variables étant très corrélées comparé à Hepatitis.B. Cela nous permettra de definir un meilleur modèle par la suite )
+
+2) thinness : regroupe thinness 1-19 et thinness 5-9
+3) infant_deaths : regroupe infant death et under five death
 
 ```{r,include=FALSE}
 data_trans = as.data.frame(data_trans)
@@ -116,9 +168,9 @@ data_trans = as.data.frame(data_trans)
 data_vaccin = select(data_trans, diphtheria, polio)
 data_thin = select(data_trans, thinness_5_9, thinness_1_19)
 data_death = select(data_trans, under_five_deaths, infant_deaths)
-
-
 ```
+
+On vérifie la pertinance de ces transformation par de nouvelles ACPs 
 
 ```{r,echo=FALSE,fig.height=2,fig.align='center'}
 res.pca1 <- prcomp(data_vaccin, scale = TRUE)
@@ -131,9 +183,13 @@ sc3 <- fviz_eig(res.pca3,addlabels=TRUE) + labs(title= "Infant_Death", y= "% of 
 plot_grid(sc1,sc2,sc3,ncol=3,scale=1)
 ```
 
+Dans les 3 cas, une dimension permet d'expliquer près de 90% des variances. Le regroupement de ces données est donc pertinant. 
+
+On se permet donc de rassembler ces variables pour la suite de notre études. `$`
+
 ```{r, echo=FALSE, include=TRUE,out.width ="250px",dpi = 120,fig.align='center', warning=FALSE}
 
-data_trans_V2 <- subset(data_trans, select=-c(diphtheria, polio,thinness_5_9, thinness_1_19,under_five_deaths, infant_deaths))
+data_trans_V2 <- select(data_trans,-c(diphtheria, polio,thinness_5_9, thinness_1_19,under_five_deaths, infant_deaths))
 var1 <- get_pca_ind(res.pca1)
 var2 <- get_pca_ind(res.pca2)
 var3 <- get_pca_ind(res.pca3)
@@ -152,9 +208,18 @@ PCA2 <- fviz_pca_var(res.pca_V2,
              )
 PCA2
 ```
+
+Les resultats restent parfaitement cohérents avec ce qui était obtenu précedemment. Cette étude nous a permis de réduire le nombre de variables quantitatives de notre étude, tout en gardant l'information principale contenue dans les données. 
+
 # II - Etude de l'espérance de vie en 2014
 
+Dans cette partie, on se concentre principalement sur les données à une année précise, ici 2014, et on cherche à étudier l'espérance de vie en fonction des autres variables. 
+
 ## II - 1. Le role du taux de mortalité infantile et adulte sur l'espérance de vie
+
+Bien qu'il semble logique que ces variables aient un rôle direct sur l'espérance de vie, on se permet de vérifier cette hypothèse via quelques outils interréssants. 
+
+Pour cette étude, on reprend directement notre jeu de données initial, auquel on vient extraire les données de 2014. `$`
 
 ```{r}
 data_trans$year = data$year
@@ -163,6 +228,10 @@ data_2014 = select(data_trans[data_trans$year == 2014,], -year)
 reg_simple = lm(life_expectancy ~ adult_mortality + infant_deaths, data = data_2014)
 summary(reg_simple)
 ```
+1. Les deux variables expliquent près de 87% de la variabilité de la variance espérance de vie.
+2. La variable mortalité adulte est celle qui a le plus de poids (coefficient en valeur absolue plus élevé).
+
+Maintenant, on va ajouter la variable *status* dans notre modele et regarder son influence :
 
 ```{r}
 data_trans$status = data$status
@@ -171,14 +240,14 @@ data_2014 = select(data_trans[data_trans$year == 2014,], -year)
 reg_interact_1 = lm(life_expectancy ~ adult_mortality + infant_deaths + adult_mortality*status + infant_deaths*status, data = data_2014)
 summary(reg_interact_1)
 ```
-Le $R^2 = 0.8831$ du modèle est plutôt bon. Les p-valeurs nous suggèrent du supprimer l'intéraction *infant_deaths:developing*.
+Le $R^2 = 0.8831$ du modèle est plutôt bon. Les p-valeurs suggèrent de supprimer l'intéraction *infant_deaths:developing*.
 
 ```{r}
 reg_interact_2 = lm(life_expectancy ~ adult_mortality + infant_deaths + adult_mortality*status, data = data_2014)
 anova(reg_interact_2, reg_interact_1)
 ```
 
-On obtient $p_{value} = 0.7872 \geq 0.05$. On ne rejette pas l'hypothèse nulle au risque $ \alpha = 5\%$. Ainsi, on garde le modèle sans intéraction entre *infant_deaths* et *status*
+On obtient $p_{value} = 0.7872 \geq 0.05$. On ne rejette pas l'hypothèse nulle au risque $\alpha = 5\%$. Ainsi, on garde le modèle sans intéraction entre *infant_deaths* et *status*
 
 ```{r}
 summary(reg_interact_2)
@@ -189,26 +258,35 @@ En conclusion, on conserve la même valeur de $R^2 = 0.883$. Les tests de nullit
 - QUESTION : L'INTERCEPT REGROUPAIT QUOI DEJA ? LES EFFETS MOYENS DE QUOI ?
 
 
-## 2.2 Impact de la couverture vaccinale sur l'espérance de vie en 2014
+## II.2 Impact de la couverture vaccinale sur l'espérance de vie en 2014
 Grâce à l'ACP effectuée précédemment, on utilise notre variable transformée *cov_vaccin*. Ainsi, on aura pas l'effet d'intéraction entre *polio* et *diphtheria* qui fausserait l'interprétation des résultats.
 
-On charge les données de 2014 en sélectionnant les bonnes variables :
+On affiche la corrélation entre l'esperance et les couvertures vaccinales:
 ```{r}
-data_trans_V2$year = data$year
-data_2014 = select(data_trans_V2[data_trans_V2$year == 2014,], -year)
-data_study = select(data_2014, life_expectancy, cov_vaccin, hepatitis_b)
+cor(data_trans_V2[,"life_expectancy"], data_trans_V2[, "cov_vaccin"] + data_trans_V2[, "hepatitis_b"], method = "pearson")
 ```
 
-On peut donc écrire notre modèle linéaire :
+cor = 0.4, il existe une faible corrélation positive entre l'espérance de vie et les couvertures vaccinales. On visualise:
+
 ```{r}
-reg_interact_1 = lm(life_expectancy ~ ., data = data_study)
-summary(reg_interact_1)
+ # visualisation
+ ggplot(data_trans_V2, aes(x = cov_vaccin + hepatitis_b, y=life_expectancy))+ 
+ geom_point() + 
+ geom_smooth(method=lm)+ 
+ xlab("Coverture vaccinale")+ 
+ ylab("Expérance de vie")
 ```
-Le $R^2 = 0.332$ est faible, $32\%$ de la variabilité est expliquée par *cov_vaccin* et *hepatitis_b*. La couverture vaccinale des maladies *polio* et *diphtheria* a le plus de poids dans ce modèle.
 
-Cependant, étant donné le $R^2$ si faible, nous ne pouvons pas conclure sur l'impact de la couverture vaccinale sur l'espérance de vie.
+On peut ensuite écrire notre modèle linéaire :
 
-## 2.3 Variables prédictives expliquant l'espérance de vie en 2014
+```{r}
+reg.multi<-lm(life_expectancy ~ cov_vaccin + hepatitis_b, data=data_trans_V2)
+summary(reg.multi)
+```
+
+Le $R^2 = 0.332$ est faible, $33\%$ de la variabilité est expliquée par *cov_vaccin* et *hepatitis_b*. La couverture vaccinale des maladies *polio* et *diphtheria* a le plus de poids dans ce modèle. Ce modèle n'est pas très pertinant et les couvertures vaccinales sont pas suffissantes pour expliquer l'espérance de vie. Les deux p-valeurs sont petites, donc elles restent importantes.
+
+## II.3 Variables prédictives expliquant l'espérance de vie en 2014
 
 Dans cette partie, on s'intéresse à voir quelles sont les variables qui expliquent le mieux l'espérance de vie en 2014. On prend le jeu de données transformé.
 
@@ -218,25 +296,31 @@ data_trans_V2$status = data$status
 data_2014 = select(data_trans_V2[data_trans_V2$year == 2014,], -year)
 ```
 
+On commence par le modele complet, et on fait une selection de variables avec la critere BIC, puis on fais une anova du modele retenu par BIC avec le modele complet:
+
 ```{r}
 model_complet1 = lm(life_expectancy~.,data=data_2014)
+modselect_bic1=stepAIC(model_complet1,trace=T,direction="backward",k=log(nrow(data_2014)))
+anova(modselect_bic1, model_complet1)
+```
+
+Visualisation du processus de selection: 
+```{r}
+choixb<-regsubsets(life_expectancy~.,data=data_2014,nbest=1,nvmax=10,method="backward")
+plot(choixb,scale = "bic") # avce differentes criteres: Cp,adjr2,bic
+```
+
+Idem pour la critere AIC:
+
+```{r}
 modselect_aic1=stepAIC(model_complet1,trace=T,direction="backward")
 anova(modselect_aic1, model_complet1)
 ```
-Visualisation: 
-```{r}
-choixb<-regsubsets(life_expectancy~.,data=data_2014,nbest=1,nvmax=10,method="backward")
-plot(choixb,scale = "bic") # Cp,adjr2,bic
-```
-
-```{r}
-modselect_bic=stepAIC(model_complet1,trace=T,direction="backward",k=log(nrow(data_2014)))
-anova(modselect_bic, model_complet1)
-```
 p-value = 0.8891, on ne rejette pas le modele simplifie au risque alpha = 0.05.
 On obtient donc le modele suivant :
+
 ```{r}
-summary(modselect_aic1)
+summary(modselect_bic1)
 ```
 
 On obtient une p-valeur bien au dessus du seuil $\alpha = 0.05$ fixé. On garde donc le modèle modselect_aic avec un $R^2=0.9275$. Les variables qui ont le plus d'influence sur l'espérance de vie sont : 
@@ -245,20 +329,23 @@ On obtient une p-valeur bien au dessus du seuil $\alpha = 0.05$ fixé. On garde 
 - *population*
 - *status*
 
-Ceci correspond bien aux violins plots de la partie 2.1. Pour les pays en voie de développement, le taux de mortalité adulte ainsi que la couverture vaccinale pour l'hépatite B sont, respectivement, plus élevé et plus faible que dans les pays développés. Ces deux variables influencent donc plus l'espérance de vie dans ces pays. Le même raisonnement peut être fait avec la couverture vaccinale (*polio* et *diphtheria*) qui a moins d'influence mais est présente dans le modèle. Finalement, la variable *population* a assez d'influence sur l'espérance de vie.
+Ceci correspond bien aux violins plots de la partie 2.1. Pour les pays en voie de développement, le taux de mortalité adulte ainsi que la couverture vaccinale pour l'hépatite B sont, respectivement, plus élevé et plus faible que dans les pays développés. Ces deux variables influencent donc plus l'espérance de vie dans ces pays. 
+
+explication de: measles BMI  total_expenditure
+
+Finalement, la variable *population* a assez d'influence sur l'espérance de vie.
 
 (Validation des hypothèses)
 Hypothèses à vérifier :
-• linéarité de la relation entre Y et x -> E(Ei) = 0
-• normalité des résidus Ei ∼ N ,
-• indépendance des résidus Ei
-• homoscdasticité des résidus V(Ei) = sigma^2 pour tout i = 1,...,n
+- linéarité de la relation entre Y et x -> E(Ei) = 0
+- normalité des résidus Ei ∼ N ,
+- indépendance des résidus Ei
+- homoscdasticité des résidus V(Ei) = sigma^2 pour tout i = 1,...,n
+
 ```{r}
-library(ggplot2)
-library(ggfortify)
 autoplot(modselect_aic1,label.size=2)
-# autoplot(modselect_aic, label.size = 2, which=c(2))
 ```
+
 Dans le 1er graphe, on représente des résidus estimés(Residuals) en fonction des valeurs ajustées(Fitted values). L'ésperance E(Ei) = 0 car les résidus restent autour de 0. La variance V(Ei) = sigma^2 car les résidus ont une dispersion à peu près constante, dans une bande de [-0.4,0.1]. Les résidus sont indépendants car ils sont random autour de 0 et il n'existe pas d'oganisation particulière.
 
 Dans le 2er graphe, les residus suivent une loi normale car les points se répartissent selon une droite et il y a en quelques se situent au bord, qui représente la faible probabilité de la loi normale dans les cas extrêmes.
@@ -266,32 +353,43 @@ Dans le 2er graphe, les residus suivent une loi normale car les points se répar
 Dans le 3er graphe, on valide l’hypothèse d’homoscédasticité (V(Ei) ≈ cste) si
 l’amplitude des sqrt(résidus) est à peu près constante peu importe la valeur ajuste.
 
-# 3 Toutes les espérances de vie
+# III - Etude de l'espérance de vie sur toutes les années.
 
-## 3.1 Les variables prédictives celles affectant réellement l’espérance de vie
+Dans cette partie, on s'interesse maintenant à toutes les espérances de vie. Nous chercherons à determiner les variables qui permettent de discriminer une espérance de vie en tenant compte de l'espérance moyenne, c'est à dire les variables qui auront un impact fort sur une espérance de vie faible, et inversement. 
+
+## III - 1. Les variables prédictives affectant réellement l'espérance de vie. 
+
+Dans cette partie, on s'intéresse à voir quelles sont les variables qui expliquent le mieux l'espérance de vie. On prend le jeu de données transformé.
+
 ```{r}
 data_all = select(data_trans_V2, -year)
 ```
+
+On commence par le modele complet, et on fait une selection de variables avec la critere AIC, puis on fais une anova du modele retenu par AIC avec le modele complet:
 
 ```{r}
 model_complet2 = lm(life_expectancy~.,data=data_all)
 modselect_aic2=stepAIC(model_complet2,trace=T,direction="backward")
 anova(modselect_aic2, model_complet2)
 ```
+
 P-valeur=0.4424, on rejette H0 au risque de 5%, on retient pas le modele simplifie avec la critere AIC.
 
 ```{r}
 modselect_bic2=stepAIC(model_complet2,trace=T,direction="backward",k=log(nrow(data_all)))
 anova(modselect_bic2, model_complet2)
 ```
+
 P-valeur = 0.1695, on ne rejette pas H0 au risque de 5%, donc on accepte le modele simplifie choisi par la critere BIC.
 
 Visualisation: 
 ```{r}
 choixb2<-regsubsets(life_expectancy~.,data=data_all,nbest=1,nvmax=10,method="backward")
-plot(choixb2,scale = "bic") # Cp,adjr2,bic
+plot(choixb2,scale = "bic") # avce differentes criteres: Cp,adjr2,bic
 ```
+
 On obtient donc le modele suivant :
+
 ```{r}
 summary(modselect_bic2)
 ```
@@ -301,8 +399,9 @@ On obtient une p-valeur bien au dessus du seuil $\alpha = 0.05$ fixé. On garde 
 - *infant_mortality*
 - *population*
 - *status*
-adult_mortality + measles + BMI + total_expenditure + population + infant_mortality + status
-adult_mortality + measles + BMI + total_expenditure + *GDP* + population + *schooling* + *cov_vaccin* + infant_mortality + status
+
+(2014: adult_mortality + measles + BMI + total_expenditure + population + infant_mortality + status
+all years: adult_mortality + measles + BMI + total_expenditure + *GDP* + population + *schooling* + *cov_vaccin* + infant_mortality + status)
 
 Par rapport au modele retenu en utilisant de donnee en 2014, cette fois-ci en prenant compte de toutes les annees, les variables *GDP*, *schooling* et *cov_vaccin* interviennent dans notre nouveau modele.
 
@@ -317,17 +416,366 @@ Dans le 2er graphe, les residus suivent une loi normale car les points se répar
 Dans le 3er graphe, on valide l’hypothèse d’homoscédasticité (V(Ei) ≈ cste) si
 l’amplitude des sqrt(résidus) est à peu près constante peu importe la valeur ajuste.
 
-## Parie 4: predictions
-Pour chaque cas (regression, classification), comparer en terme de capacite predictive les modeles lineaires avec les modeles non-lineaires (arbres, forets aleatoires).
-```{r}
-library(rpart) # chargement de la librairie
-tree.reg=rpart(life_expectancy~.,data=data_all,control=rpart.control(cp=0.001))
-# La commande ci-dessous fournit un descriptif de l'arbre obtenu
-# summary(tree.reg)
-# mais un graphe est  préférable
+## III - 2. Les variables prédictives affectant l'espérance de vie à 65 ans. 
+
+Pour réaliser cette étude, nous allons diviser le jeu de donnée défini au début de cette partie en 2 jeux de données distincts. Un composé des données avec une espérance de vie inférieur ou égale à 65 ans, et un autre avec celles supérieur à 65 ans. On commence par créer nos jeux de données, en respectant toutes les transformations considérées précédemment. `$`
+
+```{r, include=FALSE}
+data_3 = data_trans_V2
+data_3$old_life_expectancy = data$life_expectancy
+data_inf65 <- data_3[data_3$old_life_expectancy<=65,] #On créer les jeux données
+data_sup65 <- data_3[data_3$old_life_expectancy>65,]
+
+data_inf65 = select(data_inf65, -old_life_expectancy, -status, -year)
+data_sup65 = select(data_sup65, -old_life_expectancy)
 ```
 
 ```{r}
+data_inf65 <- data[data$life_expectancy<=65,] #On créer les jeux données
+data_sup65 <- data[data$life_expectancy>65,]
+
+#Il faut ensuite transformer à nouveau ces données
+
+for(i in c(4,5,6,7,8,9,10)){
+    data_inf65[,i] = log10(data_inf65[,i]+1)
+    data_sup65[,i] = log10(data_sup65[,i]+1)
+}
+
+# if no 0
+for (i in c(13,14,15,16,17,18)){
+  data_inf65[,i] = log10(data_inf65[,i])
+  data_sup65[,i] = log10(data_sup65[,i])
+}
+
+for (i in c(8,12,14)){
+  data_inf65[,i] = -log10(100-data_inf65[,i])
+  data_sup65[,i] = -log10(100-data_sup65[,i])
+}  
+  
+#On créer à nouveau nos variables 
+
+#####################Pour inf_65##########################
+
+data_vaccin_inf65 = select(data_inf65, diphtheria,polio)
+data_thin_inf65 = select(data_inf65, thinness_5_9,thinness_1_19)
+data_death_inf65 = select(data_inf65, under_five_deaths, infant_deaths)
+
+res.pca1 <- prcomp(data_vaccin_inf65, scale = TRUE)
+res.pca2 <- prcomp(data_thin_inf65, scale = TRUE)
+res.pca3 <- prcomp(data_death_inf65, scale = TRUE)
+
+data_inf65 <- subset(data_inf65, select=-c(diphtheria,polio,thinness_5_9,thinness_1_19,under_five_deaths,infant_deaths,country,year,status))                                #On retire aussi les variables qualitatives que nous n'utiliserons pas
+data_inf65 <- as.data.frame(data_inf65)
+
+var1 <- get_pca_ind(res.pca1)
+var2 <- get_pca_ind(res.pca2)
+var3 <- get_pca_ind(res.pca3)
+
+data_inf65["cov_vaccin"] = var1$coord[,1]
+data_inf65["thinness"] = -var2$coord[,1]
+data_inf65["infant_mortality"] = -var3$coord[,1]
+
+#data_inf65$Year=factor(data_inf65$Year)
+
+#####################Pour sup_65##########################
+
+data_vaccin_sup65 = select(data_sup65, diphtheria,polio)
+data_thin_sup65 = select(data_sup65, thinness_5_9,thinness_1_19)
+data_death_sup65 = select(data_sup65, under_five_deaths, infant_deaths)
+
+res.pca1 <- prcomp(data_vaccin_sup65, scale = TRUE)
+res.pca2 <- prcomp(data_thin_sup65, scale = TRUE)
+res.pca3 <- prcomp(data_death_sup65, scale = TRUE)
+
+data_sup65 <- subset(data_sup65, select=-c(diphtheria,polio,thinness_5_9,thinness_1_19,under_five_deaths,infant_deaths,country,year))
+data_sup65 <- as.data.frame(data_sup65)
+
+var1 <- get_pca_ind(res.pca1)
+var2 <- get_pca_ind(res.pca2)
+var3 <- get_pca_ind(res.pca3)
+
+data_sup65["cov_vaccin"] = var1$coord[,1]
+data_sup65["thinness"] = -var2$coord[,1]
+data_sup65["infant_mortality"] = -var3$coord[,1]
+
+data_sup65$status=factor(data_sup65$status)
+```
+
+### III - 2. a) L'espérance de vie inférieure à 65 ans.
+
+On s'intéresse ici au jeu donnée composé des données avec une espérance de vie inférieur ou égale à 65 ans. Comme dans les précédentes parties, on cherche un modèle qui réprésente au mieux l'espérance de vie.
+
+Il est intéressant de remarquer que la variable "Status" vaut "Developing" sur l'ensemble du jeu de données. Cela signifie que l'intégralité des pays ayant une espérance de vie inférieure à 65 sont des pays en cours de développement, et ce quelque soit l'année prise en compte.
+
+
+On choisit également de ne pas étudier la variable qualitative "Year". Nous pouvons justifier ce choix via le boxplot suivant :
+
+```{r,echo=FALSE,out.width ="250px",dpi = 120,fig.align='center', }
+boxplot(data$life_expectancy ~ data$year, main = "Espérance de vie en fonction des années", xlab="Year", ylab="Life Expectancy")
+```
+Bien que l'espérance de vie ait grandement évolué au cours des années, l'échantillon est ici trop faible (14 ans) pour être considéré comme une variable explicative des données.  
+
+Etudions le modèle complet de notre jeu de données :
+
+```{r}
+lm1 <- lm(life_expectancy ~ . , data = data_inf65)
+summary(lm1)
+```
+```{r}
+choixinf65<-regsubsets(life_expectancy~ . ,data=data_inf65,nbest=1,nvmax=100,method="backward") 
+plot(choixinf65,scale = "bic",tl.srt = 45)
+```
+
+Une première analyse du modèle complet nous permet de remarquer que les variables "Alcohol", "Measles", "hepatitis_b" et "cov_vaccin" ont une p-valeur élevée (> 0.35) et que nous pouvons donc les négliger dans notre premier modèle. 
+
+```{r}
+lm2 <- lm(life_expectancy ~ adult_mortality +  cov_vaccin + population + schooling + thinness + infant_mortality  , data = data_inf65)
+summary(lm2)
+```
+
+On trouve finalement un modèle (modèle 2) composé des variables "adult_mortality", "population", "schooling", "BMI", "infant_mortality", "thinness", "GDP", "total_expenditure".
+Ce modèle a un R² de O.8975 (contre 0.8982 dans le modèle complet). Le modèle est donc bon. On compare tout de même les deux modèles.
+
+```{r}
+anova(lm2,lm1)
+```
+
+On obtient finalement une p-valeur < 0.01. On ne rejette donc pas le modèle 2, et on peut conclure que les variables qui expliquent le mieux l'espérance de vie, des pays ayant une espérance < 65 ans, sont "Adult.Mortality", "Population", "Schooling", "cov_vaccin" et "infant_deaths".
+
+Bien que la variable "Status" ne soit pas dans ce modèle, nous pouvons tout de même conclure qu'elle joue un rôle majeur dans ces données, car pour le moment, aucun pays considéré comme "en développement" possède une espérance de vie moyenne inférieure à 65 ans. 
+
+### III - 2. b) L'espérance de vie supérieur à 65 ans.
+
+Comme pour l'étude précédente, on test notre modèle complet afin d'identifier des variables avec un faible impact. Cette fois, nous prendrons en compte la variable "Status", car celle-ci varit dans ce jeu de données. 
+
+```{r}
+lm1 <- lm(life_expectancy ~ . + .*status, data = data_sup65)
+summary(lm1)
+```
+Grâce à cette première analyse (R² = 0.8606), on peut déjà observer de nombreuses variables expliquants très peu l'espérance de vie dans ce jeu données, que l'on va alors pouvoir négliger.
+On réalise alors un nouveau modèle en prenant en compte ces analyses.
+
+```{r}
+lm2 <- lm(life_expectancy ~ adult_mortality + GDP + population +  thinness + adult_mortality*status + infant_mortality , data = data_sup65)
+summary(lm2)
+```
+
+Ce nouveau modèle, en comptant les intéractions, dispose de 16 variables en moins que le modèle complet. Cependant, on dispose toujours d'un R² bon (0.8491 contre 0.8606 dans le modèle complet), et donc les informations "importantes" sont conservées.  
+
+```{r}
+anova(lm2,lm1)
+```
+
+En comparant les modèles, on obtient une p-valeur << 0.01, on ne rejette donc pas le modèle 2, et on peut conclure que les variables qui expliquent le mieux l'espérance de vie, des pays ayant une espérance < 65 ans, sont "Adult.Mortality","GDP" ,"Population", "thinness", "infant_deaths" et enfin "Adult.Mortality:Status".
+
+Ce que l'on peut conclure sur cette partie, c'est que certaines variables sont fortement explitatives dans un jeu de données, mais le sont pas dans l'autre. Prenons par exemple la variable "SChooling". Cette variable n'a pas d'influence forte sur les pays à l'espérance de vie supérieure à 65 ans, alors qu'elle que c'est le cas pour l'autre jeu de données. On peut expliquer ce phénomène par le fait que certaines variables vont disposer de nombreuses valeurs extrêmes dans certains cas. Les pays avec un nombre d'année d'étude moyen particulièrement faible sont de manière générale les mêmes pays qui disposent d'une espérance de vie très faible. Dans ce jeu de données près de 3/4 du nombre d'années d'études se situent entre 9 et 12. Alors qu'une autre partie, d'un plus faible échantillon, se situe entre 4 et 8 années. Et ces mêmes pays sont ceux disposant d'une espérance de vie particulièrement faible. C'est par exemple le cas du Mali, de l'Afghanistan, ou encore du Niger. Le nombre d'années d'étude tend rapidement vers 9 années, là ou l'espérance de vie est aussi moins abérante, d'où le fait que cette variable est importante dans ce jeu de données. Dans l'autre jeu de données, ce phénomène se retrouve moins. 
+
+## III - 2. Les variables prédictives affectant l'espérance de vie inferieure et superieure a 65 ans - Regression logistique
+
+Dans cette partie, on va faire une approche differente. Au lieu de separer les donnees selon l'esperance de vie, on va considerer l'ensemble des individus en ajoutant une nouvelle variable *life_exp_sup_65* telle que :
+$$\begin{cases} 0, \text{ si life_exp_sup_65} < 65\\ 
+                1, \text{ si life_exp_sup_65} > 65 \\ 
+\end{cases}$$
+On commence par appliquer la transformation a notre jeu de donnees :
+
+```{r}
+data_esp_1 = data_trans_V2
+data_esp_1$old_life_expectancy = data$life_expectancy
+data_esp_1$life_exp_sup_65 = as.factor(data_esp_1$old_life_expectancy > 65)
+#data_esp$life_exp_sup_65 = data_esp$life_exp_sup_65
+data_esp_1$status = as.factor(data$status)
+data_esp_1 = select(data_esp_1, -old_life_expectancy, -life_expectancy, -year)
+head(data_esp_1)
+```
+
+On va effectuer une validation croisee pour avoir la performance du modele. On commence par separer le jeu de donnees en deux : train et test.
+
+```{r}
+set.seed(1)
+sample <- sample(c(TRUE, FALSE), nrow(data_esp_1), replace=TRUE, prob=c(0.8,0.2))
+train <- data_esp_1[sample, ]
+test <- data_esp_1[!sample, ]
+```
+
+Maintenant, on peut fit le modele sur l'ensemble train : 
+
+```{r}
+log_model_complet = glm(life_exp_sup_65 ~ . + .*status, data = train, family = binomial(logit))
+summary(log_model_complet)
+```
+
+Les p-valeurs du modele suggerent que l'on peut enlever plusieurs variables : (on peut cacher ce code)
+
+```{r, warning=FALSE}
+best_log_model = stepAIC(log_model_complet)
+```
+
+Le meilleure modele est donc : 
+
+```{r}
+summary(best_log_model)$coefficients
+```
+
+Une seule modalite de la variable *life_exp_sup_65* apparait, la modalite 0 a ete prise comme reference.
+L'interpretation des coefficients du modele est differente que dans la modele de regression lineaire. En effet, les coefficients obtenus ci-dessus sont dans la base log. On prend donc l'exponentielle des coefficients, la fonction *odds_ratio* s'occupe de directement de faire la conversion :
+
+```{r, warning=FALSE}
+odds.ratio(best_log_model)
+```
+
+```{r}
+exp(best_log_model$coefficients)
+```
+
+Les coefficients obtenus correspondent a des rapports de cote (odds ratio), c'est different que dans le modele lineaire mais l'interpretation reste toutefois similaire. Ainsi, un rapport de 1 indique que la variable n'a pas d'influence dans le modele, un rapport superieur a 1 correspond a une augmentation du phenomene etudie (ici, le fait d'appartenir dans le groupe des pays ayant une esperance de vie superieure a 65 ans) et un rapport inferieur a 1 correspond a l'effet contraire (appartenir aux pays ayant une esperance de vie inferieure a 65 ans). 
+Ainsi, on se concentre seulement sur les variables "ecartees" de 1 : 
+- *adult_mortality* : Plus le taux de mortalite adulte est eleve, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie inferieure a 65 ans. 
+- *GDP* : Plus le GDP est eleve, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie superieure a 65 ans.
+- *population* : Plus la population est elevee, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie superieure a 65 ans.
+- *infant_mortality* : Plus le taux de mortalite infantile est eleve, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie inferieure a 65 ans.
+
+Dans le graphique suivant, on peut voir les influences.
+
+```{r}
+ggcoef(best_log_model,
+       exponentiate = TRUE)
+```
+
+Finalement, on va regarder la performance du modele a l'aide de la matrice de confusion : 
+
+```{r}
+test <- data_esp_1[!sample, ]
+predicted = predict(best_log_model, newdata=test, type="response")
+test$life_exp_sup_65 = ifelse(test$life_exp_sup_65=="TRUE", 1, 0)
+confusionMatrix(data = as.factor(as.numeric(predicted>0.5)), reference = as.factor(test$life_exp_sup_65))
+```
+
+La matrice de confusion donne une precision de 0.9583 ce qui est tres eleve. On peut egalement voir la courbe ROC qui mesure la proportion des vrais positifs (sensitivite) contre la proportion des faux positifs (specificite) :
+
+```{r}
+test$predict = predicted
+roc(life_exp_sup_65 ~ predict, data = test, plot = TRUE, main = "ROC CURVE", col= "blue")
+```
+
+On regarde l'aire sous la courbe, plus on est proche de 1, meilleur est le modele : 
+
+```{r}
+auc(life_exp_sup_65 ~ predict, data = test)
+```
+
+Le modele est donc tres performant et, a partir des variables en entree, fera une excellente prediction si le pays a une esperance superieure ou inferieure a 65 ans.
+
+## III - 3. Les variables prédictives affectant l'espérance de vie de inferieur a 65 ans, entre 65 et 80 et superieur a 80 ans  - Regression logistique
+
+On cree la nouvelle variable *life_exp_65_80* telle que : 
+$$\begin{cases} 0, \text{ si old_life_expectancy} < 65\\ 
+                1, \text{ si old_life_expectancy}\in[65,80] \\ 
+                2, \text{ si old_life_expectancy}> 80
+
+\end{cases}$$
+
+```{r}
+life_expectancies = data$life_expectancy
+output_life = c()
+
+for (expectancy in life_expectancies){
+  if (expectancy < 65){
+    output_life = c(output_life, 0)
+  }
+  else if (expectancy > 80){
+    output_life = c(output_life, 2)
+  }
+  else {
+    output_life = c(output_life, 1)
+  }
+}
+```
+
+Ainsi, on ajoute la variable dans les donnees et on separe les separe en deux : train et test.
+
+```{r}
+data_esp_2 = data_trans_V2
+data_esp_2$old_life_expectancy = data$life_expectancy
+data_esp_2$life_exp_65_80 = output_life
+
+data_esp_2$status = as.factor(data$status)
+data_esp_2 = select(data_esp_2, -old_life_expectancy, -life_expectancy, -year)
+head(data_esp_2)
+
+set.seed(33)
+sample <- sample(c(TRUE, FALSE), nrow(data_esp_2), replace=TRUE, prob=c(0.8,0.2))
+train <- data_esp_2[sample, ]
+test <- data_esp_2[!sample, ]
+```
+
+On applique donc le modele de regression logistique multinomiale :
+
+```{r}
+log_multi_model = multinom(life_exp_65_80 ~ . + .*status, data = train)
+summary(log_multi_model)
+```
+
+On fait une selection de variables, ce qui nous donne le meilleur modele, ainsi que les rapports de cote : 
+
+```{r}
+best_log_multi = step(log_multi_model)
+```
+
+```{r}
+summary(best_log_multi)$coefficients
+```
+
+```{r}
+odds.ratio(best_log_multi)
+```
+
+Notre modele contient que deux modalites de la variable *life_exp_65_80*, la modalite $0$ (esperance de vie inferieure a 65 ans) est prise comme modalite de reference. L'interpretation reste la meme que la question precedente avec les ratios de cote. Ainsi, pour la modalite 1 :
+- *adult_mortality* et *infant_mortality* : Plus ces taux sont eleves, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie inferieure a 65 ans par rapport au groupe des pays entre 65 et 80 ans d'esperance de vie. 
+- *GDP* et *population* : Plus ces variables sont fortes, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie entre 65 et 80 ans par rapport au groupe des pays ou l'esperance de vie est inferieure a 65 ans. 
+- *status_developing* : La modalite de base est *developed*. Ainsi, etre parmis les pays en voie de developpement, augmente les chances d'avoir une esperance de vie inferieure a 65 ans par rapport a avoir une esperance de vie entre 65 et 80 ans. 
+- *adult_mortality:statusDeveloping* : le coefficient correspond a la difference dans le changement de "probabilite" lorsque le taux de mortalite adulte augmente de 1 dans un pays en voie de developpement compare au changement de "probabilite" lorsque le taux de mortalite augmente de 1 dans un pays developpe. Ici, le coefficient est inferieur a 1. Donc, plus le taux de mortalite adulte augmente, plus le pays est susceptible d'etre parmis les pays en voie de developpement.
+De plus, si on regarde seulement l'*intercept*, un pays ayant toutes les variables egales a 0 (un pays dans la moyenne pour chaque variable) est plus susceptible d'etre classifie avec les pays ayant une esperance de vie entre 65 et 80 ans par rapport a ceux inferieurs a 65 ans. 
+
+Pour la modalite 2 :
+- *adult_mortality*, *thinness* et *infant_mortality* : Plus ces taux sont forts, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie inferieure a 65 ans par rapport au groupe des pays ou l'esperance de vie est superieure a 80 ans. 
+- *alcohol*, *BMI*, *total_expenditure*, *GDP* et *population* : Plus ces variables sont elevees, plus les individus sont susceptibles d'etre inclus dans le groupe des pays ayant une esperance de vie inferieure a 65 ans par rapport au groupe des pays ou l'esperance de vie est superieure a 80 ans.
+- *status_developing* : La modalite de base est *developed*. Ainsi, etre parmis les pays en voie de developpement, augmente les chances d'avoir une esperance de vie inferieure a 65 ans par rapport a avoir une esperance de vie superieure a 80 ans.
+- *adult_mortality:statusDeveloping* : Ici, le coefficient est inferieur a 1. Donc, plus le taux de mortalite adulte augmente, plus le pays est susceptible d'etre parmis les pays en voie de developpement.
+
+On peut visualiser les resultats :
+
+```{r}
+library(broom.helpers)
+ggcoef_multinom(
+  best_log_multi,
+  type = "faceted",
+  exponentiate = TRUE
+)
+```
+
+Finalement, on va regarder la performance du modele a l'aide de la matrice de confusion : 
+
+```{r}
+test <- data_esp_2[!sample, ]
+predicted = predict(best_log_multi, newdata=test, type="class")
+#test$life_exp_65_80 = ifelse(test$life_exp_65_80=="TRUE", 1, 0)
+confusionMatrix( data = predicted, reference = as.factor(test$life_exp_65_80))
+```
+
+La matrice de confusion donne une precision de 0.9527 ce qui est tres eleve.
+
+# IV - Prediction
+
+Pour chaque cas (regression, classification), comparer en terme de capacite predictive les modeles lineaires avec les modeles non-lineaires (arbres, forets aleatoires).
+
+```{r}
+library(rpart)
+tree.reg=rpart(life_expectancy~.,data=data_all,control=rpart.control(cp=0.001))
+summary(tree.reg) # un descriptif de l'arbre obtenu
+```
+
+```{r}
+# graphe
 plot(tree.reg)
 text(tree.reg)
 ```
@@ -421,6 +869,7 @@ plot(fit.tree, res.tree,
      ylab = "Résidus", xlab = "Valeurs prédites") 
 abline(h = 0, lty = "dotted")
 ```
+
 ## classification:
 ```{r}
 tree.dis <- rpart(DepSeuil~., data = datappq, 
@@ -467,36 +916,13 @@ table(pred.treer > 0.61, datestr[, "life_expectancy"] > 0.61)
 table(pred.treeq, datestq[, "DepSeuil"])
 ```
 
-## Forêts aléatoires
-
-```{r}
-library(randomForest)
-rf.reg <- randomForest(O3obs~., data=datappr,xtest=datestr[,-2],ytest=datestr[,"O3obs"],
-   ntree=500,do.trace=50,importance=TRUE)
-```
-
-```{r}
-fit.rfr <- rf.reg$predicted
-res.rfr <- fit.rfr - datappr[,"O3obs"]
-plot(fit.rfr, res.rfr, 
-     col = "blue", pch = 20,
-     xlab = "Résidus", ylab = "Valeurs prédites")
-abline(h = 0, lty = "dotted")
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
 # V. Clustering
+
 Dans cette partie, on va effectuer un clustering des données de 2014 avec nos données déjà transformées.
 
 ```{r}
 data_trans_V2$year = data$year
-data_clustering = dplyr::select(data_trans_V2[data_trans_V2$year == 2014,],-year,-status)
+data_clustering = select(data_trans_V2[data_trans_V2$year == 2014,],-year,-status)
 ```
 
 La première étape consiste à déterminer combien de clusters choisir. On va commencer par faire une estimation. Dans ce clustering, on veut classifier des pays et il n'existe pas beaucoup de types de pays différents. On a déjà sous la variable *status* les deux modalités *developing* et *developed*.
@@ -524,8 +950,8 @@ df=data.frame(K=2:Kmax,Silhouette=Silhou)
 ggplot(df,aes(x=K,y=Silhouette))+
   geom_point()+
   geom_line()
-
 ```
+
 On remarque plusieurs choses :
 - Les scores silhouette sont très faibles
 - Le nombre d'individus mal classés est faible
@@ -537,6 +963,7 @@ Ainsi, il faut trancher entre 3 et 4 clusters. Le score étant faible pour les d
 3. On effectue un clustering agglomératif avec les centroïdes en entrée
 
 Première étape : K-means avec k = 4
+
 ```{r}
 set.seed(33)
 kmeans_alg = kmeans(data_clustering, centers = 4)
@@ -545,6 +972,7 @@ kmeans_labels = kmeans_alg$cluster
 ```
 
 Deuxième étape : clustering hiérarchique avec les centroïdes précédents
+
 ```{r}
 dist_mat <- dist(kmeans_centroid, method = 'euclidean')
 hclust_avg <- hclust(dist_mat, method = 'ward.D2')
@@ -561,31 +989,34 @@ for (lab_index in kmeans_labels) {
     final_labels = c(final_labels, cutree(hclust_avg, k = 3)[lab_index]) }
 
 data_clustering$cluster = final_labels
-data_clustering$country = dplyr::select(data[data$year == 2014,],country)$country
+data_clustering$country = select(data[data$year == 2014,],country)$country
 ```
 
 Maintenant que nous avons retrouvé notre jeu de donnée initial avec l'ajout du cluster pour chaque *country_year*, nous allons examiner les clusters un à un.
 
 Pays dans le cluster 1
+
 ```{r}
-dplyr::select(data_clustering[data_clustering$cluster == 1,],country)$country
+select(data_clustering[data_clustering$cluster == 1,],country)$country
 ```
 
 Pays dans le cluster 2
+
 ```{r}
-dplyr::select(data_clustering[data_clustering$cluster == 2,],country)$country
+select(data_clustering[data_clustering$cluster == 2,],country)$country
 ```
 
 Pays dans le cluster 3
+
 ```{r}
-dplyr::select(data_clustering[data_clustering$cluster == 3,],country)$country
+select(data_clustering[data_clustering$cluster == 3,],country)$country
 ```
 
 Il ne reste plus qu'à comparer la corrélation globale avec la corrélation de chaque cluster. Pour cela, on va calculer la différence entre la matrice de corrélation du cluster et la matrice de corrélation initiale de toutes les données. Les valeurs positives indiquent que la corrélation de la variable est plus elevée, les valeurs négatives indiquent le contraire.
 
 ```{r}
-res1 = cor(dplyr::select(data_clustering[data_clustering$cluster == 1,],-country,-cluster), method = c("pearson", "kendall", "spearman"))
-res2 = cor(dplyr::select(data_trans_V2, -year, -status), method = c("pearson", "kendall", "spearman"))
+res1 = cor(select(data_clustering[data_clustering$cluster == 1,],-country,-cluster), method = c("pearson", "kendall", "spearman"))
+res2 = cor(select(data_trans_V2, -year, -status), method = c("pearson", "kendall", "spearman"))
 corrplot(res1, type = "upper", order = "hclust", 
          tl.col = "black", tl.srt = 45)
 corrplot(res1-res2, order = "hclust", 
@@ -593,9 +1024,8 @@ corrplot(res1-res2, order = "hclust",
 ```
 
 ```{r}
-
-res1 = cor(dplyr::select(data_clustering[data_clustering$cluster == 2,],-country,-cluster), method = c("pearson", "kendall", "spearman"))
-res2 = cor(dplyr::select(data_trans_V2, -year, -status), method = c("pearson", "kendall", "spearman"))
+res1 = cor(select(data_clustering[data_clustering$cluster == 2,],-country,-cluster), method = c("pearson", "kendall", "spearman"))
+res2 = cor(select(data_trans_V2, -year, -status), method = c("pearson", "kendall", "spearman"))
 corrplot(res1, type = "upper", order = "hclust", 
          tl.col = "black", tl.srt = 45)
 corrplot(res1-res2, order = "hclust", 
@@ -603,14 +1033,13 @@ corrplot(res1-res2, order = "hclust",
 ```
 
 ```{r}
-res1 = cor(dplyr::select(data_clustering[data_clustering$cluster == 3,],-country,-cluster), method = c("pearson", "kendall", "spearman"))
-res2 = cor(dplyr::select(data_trans_V2, -year, -status), method = c("pearson", "kendall", "spearman"))
+res1 = cor(select(data_clustering[data_clustering$cluster == 3,],-country,-cluster), method = c("pearson", "kendall", "spearman"))
+res2 = cor(select(data_trans_V2, -year, -status), method = c("pearson", "kendall", "spearman"))
 corrplot(res1, type = "upper", order = "hclust", 
          tl.col = "black", tl.srt = 45)
 corrplot(res1-res2, order = "hclust", 
          tl.col = "black", tl.srt = 45)
 ```
-
 
 Commentaire (corrélations et différences selon *life_expectancy*):
 - Cluster 1 : seulement *adult_mortality* est fortement corrélée. *cov_vaccin* et *infant_mortality* sont les deux variables qui ont le plus varié.
@@ -619,9 +1048,8 @@ Commentaire (corrélations et différences selon *life_expectancy*):
 
 Visualisons les boxplots pour les variables ayant varié fortement. Ceci nous permettra d'identifier des caractéristiques sur les clusters.
 
-
 ```{r}
-data_cluster = melt(dplyr::select(data_clustering[data_clustering$cluster == 1,],-country,-cluster)[,c('life_expectancy','cov_vaccin', 'infant_mortality')])
+data_cluster = melt(select(data_clustering[data_clustering$cluster == 1,],-country,-cluster)[,c('life_expectancy','cov_vaccin', 'infant_mortality')])
 ggplot(data_cluster, aes(x = variable, y = value)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 60, hjust = 1))
 ```
 
@@ -629,7 +1057,7 @@ Le cluster 1 a une espérance de vie légèrement plus haute que la moyenne. Les
 Ce sont des pays en voix de développement.
 
 ```{r}
-data_cluster = melt(dplyr::select(data_clustering[data_clustering$cluster == 2,],-country,-cluster)[,c('life_expectancy','BMI', 'schooling', 'GDP')])
+data_cluster = melt(select(data_clustering[data_clustering$cluster == 2,],-country,-cluster)[,c('life_expectancy','BMI', 'schooling', 'GDP')])
 ggplot(data_cluster, aes(x = variable, y = value)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 60, hjust = 1))
 ```
 
@@ -637,7 +1065,7 @@ Le cluster 2 a une espérance de vie très au dessus de la moyenne. L'indice de 
 On a des pays développés.
 
 ```{r}
-data_cluster = melt(dplyr::select(data_clustering[data_clustering$cluster == 3,],-country,-cluster)[,c('life_expectancy','thinness', 'alcohol', 'total_expenditure', 'BMI')])
+data_cluster = melt(select(data_clustering[data_clustering$cluster == 3,],-country,-cluster)[,c('life_expectancy','thinness', 'alcohol', 'total_expenditure', 'BMI')])
 ggplot(data_cluster, aes(x = variable, y = value)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 60, hjust = 1))
 ```
 
@@ -648,9 +1076,8 @@ Maintenant que l'on a caractérisé les clusters, il ne manque plus qu'à identi
 
 Commençons par le cluster 1.
 
-
 ```{r}
-data_cluster = dplyr::select(data_clustering[data_clustering$cluster == 1,],-country,-cluster)
+data_cluster = select(data_clustering[data_clustering$cluster == 1,],-country,-cluster)
 choixb<-regsubsets(life_expectancy~.,data=data_cluster,nbest=1,nvmax=10,method="forward") 
 plot(choixb,scale = "bic",tl.srt = 45)
 ```
@@ -659,7 +1086,6 @@ plot(choixb,scale = "bic",tl.srt = 45)
 model_complet = lm(life_expectancy~.,data=data_cluster)
 best_model = stepAIC(model_complet, direction="backward")
 ```
-
 
 ```{r}
 reg_cluster_1 = lm(life_expectancy ~ adult_mortality + hepatitis_b + measles + 
@@ -685,7 +1111,7 @@ La première est la variable la plus corrélée à l'espérance de vie. La deuxi
 Analysons maintenant le cluster 2.
 
 ```{r}
-data_cluster = dplyr::select(data_clustering[data_clustering$cluster == 2,],-country,-cluster)
+data_cluster = select(data_clustering[data_clustering$cluster == 2,],-country,-cluster)
 choixb<-regsubsets(life_expectancy~.,data=data_cluster,nbest=1,nvmax=10,method="forward") 
 plot(choixb,scale = "bic",tl.srt = 45)
 ```
@@ -702,11 +1128,13 @@ reg_cluster_2 = lm(life_expectancy ~ hepatitis_b + measles + total_expenditure +
 
 anova(reg_cluster_2, model_complet)
 ```
+
 La p-valeur est 0.9294 bien au-dessus du risque $\alpha = 0.05$. On ne rejette donc pas le modèle simplifié.
 
 ```{r}
 summary(reg_cluster_2)
 ```
+
 Le $R^2$ du modèle est assez faible, égal à $0.6074$. La variable expliquant le mieux l'espérance de vie est :
 - *total_expenditure*
 
@@ -715,7 +1143,7 @@ Dans ce modèle, on a des pays développés. Ainsi, ils ont plutôt des caracté
 Analysons maintenant le cluster 3.
 
 ```{r}
-data_cluster = dplyr::select(data_clustering[data_clustering$cluster == 3,],-country,-cluster)
+data_cluster = select(data_clustering[data_clustering$cluster == 3,],-country,-cluster)
 choixb<-regsubsets(life_expectancy~.,data=data_cluster,nbest=1,nvmax=10,method="forward") 
 plot(choixb,scale = "bic",tl.srt = 45)
 ```
@@ -732,6 +1160,7 @@ reg_cluster_3 = lm(life_expectancy ~ adult_mortality + measles + population + th
 
 anova(reg_cluster_3, model_complet)
 ```
+
 La p-valeur est 0.9084 bien au-dessus du risque $\alpha = 0.05$. On ne rejette donc pas le modèle simplifié.
 
 ```{r}
@@ -766,7 +1195,7 @@ En combinant toutes les années (code effectué sur R uniquement), on peut voir 
 
 ```{r}
 data_trans_V2$year = data$year
-data_test = dplyr::select(data_trans_V2,-year,-status)
+data_test = select(data_trans_V2,-year,-status)
 set.seed(33)
 kmeans_alg = kmeans(data_test, centers = 4)
 kmeans_centroid = kmeans_alg$centers
@@ -776,6 +1205,7 @@ hclust_avg <- hclust(dist_mat, method = 'ward.D2')
 plot(hclust_avg)
 
 ```
+
 ```{r}
 final_labels = c()
 
@@ -783,19 +1213,19 @@ for (lab_index in kmeans_labels) {
     final_labels = c(final_labels, cutree(hclust_avg, k = 3)[lab_index]) }
 
 data_test$cluster = final_labels
-data_test$country = dplyr::select(data,country)$country
+data_test$country = select(data,country)$country
 ```
 
 ```{r}
-unique(dplyr::select(data_test[data_test$cluster == 1,],country)$country)
+unique(select(data_test[data_test$cluster == 1,],country)$country)
 ```
 
 ```{r}
-unique(dplyr::select(data_test[data_test$cluster == 2,],country)$country)
+unique(select(data_test[data_test$cluster == 2,],country)$country)
 ```
 
 ```{r}
-data_cluster = dplyr::select(data_test[data_test$cluster == 1,],-country,-cluster)
+data_cluster = select(data_test[data_test$cluster == 1,],-country,-cluster)
 choixb<-regsubsets(life_expectancy~.,data=data_cluster,nbest=1,nvmax=10,method="forward") 
 plot(choixb,scale = "bic",tl.srt = 45)
 ```
@@ -804,7 +1234,6 @@ plot(choixb,scale = "bic",tl.srt = 45)
 model_complet = lm(life_expectancy~.,data=data_cluster)
 best_model = stepAIC(model_complet, direction="backward")
 ```
-
 
 ```{r}
 reg_cluster_1 = lm(life_expectancy ~ adult_mortality + alcohol + BMI + total_expenditure + 
@@ -813,19 +1242,21 @@ reg_cluster_1 = lm(life_expectancy ~ adult_mortality + alcohol + BMI + total_exp
 
 anova(reg_cluster_1, model_complet)
 ```
+
 ```{r}
 summary(reg_cluster_1)
 ```
+
 ```{r}
-data_cluster = dplyr::select(data_test[data_test$cluster == 2,],-country,-cluster)
+data_cluster = select(data_test[data_test$cluster == 2,],-country,-cluster)
 choixb<-regsubsets(life_expectancy~.,data=data_cluster,nbest=1,nvmax=10,method="forward") 
 plot(choixb,scale = "bic",tl.srt = 45)
 ```
+
 ```{r}
 model_complet = lm(life_expectancy~.,data=data_cluster)
 best_model = stepAIC(model_complet, direction="backward")
 ```
-
 
 ```{r}
 reg_cluster_2 = lm(life_expectancy ~ adult_mortality + measles + BMI + total_expenditure + 
@@ -838,3 +1269,4 @@ anova(reg_cluster_2, model_complet)
 ```{r}
 summary(reg_cluster_2)
 ```
+
